@@ -1,0 +1,11 @@
+name: cobuddy_bridge
+description: CodeBuddy multi-account token rotator
+version: 1.0.0
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  nocterm: ^0.8.0
+  http: ^1.6.0
+  crypto: ^3.0.7

@@ -1,0 +1,12 @@
+# Dart
+.dart_tool/
+.pub/
+build/
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime state (but keep AGENTS.md and source)
+*.log
