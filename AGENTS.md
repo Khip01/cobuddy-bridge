@@ -225,7 +225,7 @@ This is a complete rewrite of the original Go project at `~/App/codebuddy/`. Key
 | Lines of code | ~3600 (7 files) | ~1600 (7 files) |
 | Storage format | Same (JSON per account) | Same (backward compatible) |
 | Proxy path | `/v2` (fixed) | `/v2` |
-| Clipboard | No | OSC 52 + xclip + wl-copy |
+| Clipboard | No | wl-copy/xclip stdin pipe, fallback OSC 52 |
 | Terminal cleanup | `exit(0)` → garbage chars | `shutdownApp()` → clean |
 
 ## Known Issues / Gotchas
@@ -233,5 +233,5 @@ This is a complete rewrite of the original Go project at `~/App/codebuddy/`. Key
 - Login URL flow requires browser with active CodeBuddy session (GitHub auth)
 - Session_code expires after a few minutes — must paste quickly
 - Quota probe returns HTML 401 from APISIX for valid tokens (handled gracefully — leaves state alone)
-- Clipboard fallback (`xclip` / `wl-copy`) depends on the user's Linux display server
+- Clipboard: native `wl-copy`/`xclip` via stdin pipe (prioritas), fallback OSC 52
 - `nocterm` `TextField` consumes Enter key — import uses `onSubmitted` callback, not root `Focusable` handler

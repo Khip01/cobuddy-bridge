@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:nocterm/nocterm.dart';
 import '../models/account.dart';
@@ -35,9 +34,9 @@ class AppState extends State<CobuddyApp> {
   _Panel _panel = _Panel.main;
   String _status = '';
   String _authUrl = '';
-  bool _showCopied = false;
   Timer? _copyTimer;
   int _importFocus = 0;
+  final _urlCtrl = TextEditingController();
   final _stateCtrl = TextEditingController();
   final _labelCtrl = TextEditingController();
   Timer? _ticker;
@@ -52,6 +51,7 @@ class AppState extends State<CobuddyApp> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _urlCtrl.dispose();
     _stateCtrl.dispose();
     _labelCtrl.dispose();
     super.dispose();
@@ -92,7 +92,6 @@ class AppState extends State<CobuddyApp> {
           if (e.logicalKey == LogicalKey.escape) {
             _copyTimer?.cancel();
             _copyTimer = null;
-            _showCopied = false;
             _panel = _Panel.main;
             _status = '';
             setState(() {});
@@ -103,15 +102,7 @@ class AppState extends State<CobuddyApp> {
             return true;
           }
           if (e.logicalKey == LogicalKey.enter) {
-            _copyTimer?.cancel();
-            _copyTimer = null;
-            _showCopied = false;
-            _panel = _Panel.import;
-            _importFocus = 0;
-            _labelCtrl.text = '';
-            _stateCtrl.text = '';
-            _status = 'Enter a label (optional), then paste the session_code from the URL bar and press Enter';
-            setState(() {});
+            _advanceToImport();
             return true;
           }
           return false;
@@ -121,6 +112,7 @@ class AppState extends State<CobuddyApp> {
         if (_panel == _Panel.import) {
           if (e.logicalKey == LogicalKey.escape) {
             _panel = _Panel.main;
+            _status = '';
             setState(() {});
             return true;
           }
@@ -227,13 +219,30 @@ class AppState extends State<CobuddyApp> {
       children: [
         const Text('Add Account', style: TextStyle(fontWeight: FontWeight.bold)),
         const SizedBox(height: 1),
-        const Text('1. Press [c] to copy the URL below',
+        const Text('1. Click box to copy URL, or press [c] to copy',
             style: TextStyle(color: Colors.cyan)),
         const SizedBox(height: 1),
-        Text(
-          _showCopied ? '✓ Copied to clipboard!' : _authUrl,
-          style: TextStyle(
-            color: _showCopied ? Colors.green : Colors.white,
+        GestureDetector(
+          onTap: () => _doCopyUrl(_authUrl),
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.all(1),
+            decoration: BoxDecoration(
+              border: BoxBorder.all(color: Colors.cyan),
+            ),
+            child: TextField(
+              controller: _urlCtrl,
+              focused: true,
+              width: _urlCtrl.text.length + 2,
+              onKeyEvent: (e) {
+                if (e.logicalKey == LogicalKey.keyC && !e.isControlPressed) {
+                  _doCopyUrl(_authUrl);
+                  return true;
+                }
+                return false;
+              },
+              onSubmitted: (_) => _advanceToImport(),
+            ),
           ),
         ),
         const SizedBox(height: 1),
@@ -246,37 +255,51 @@ class AppState extends State<CobuddyApp> {
     );
   }
 
-  void _doCopyUrl(String url) {
-    // Try OSC 52 (nocterm clipboard)
-    final oscOk = Clipboard.copy(url);
-
-    // Fallback: try xclip, then wl-copy
-    if (!oscOk) {
-      try {
-        File('/tmp/cb_url.txt').writeAsStringSync(url);
-        var p = Process.runSync(
-          'xclip', ['-selection', 'clipboard', '/tmp/cb_url.txt'],
-          runInShell: true,
-        );
-        if (p.exitCode != 0) {
-          p = Process.runSync(
-            'wl-copy', ['<', '/tmp/cb_url.txt'],
-            runInShell: true,
-          );
-        }
-      } catch (_) {}
-    }
-
+  void _doCopyUrl(String url) async {
     _copyTimer?.cancel();
-    _showCopied = true;
-    _status = 'URL copied to clipboard!';
+    _status = 'Copying URL to clipboard...';
     setState(() {});
 
-    _copyTimer = Timer(const Duration(seconds: 2), () {
-      _showCopied = false;
-      _status = 'Press [c] to copy URL, then open in browser';
-      if (mounted) setState(() {});
-    });
+    final ok = await _copyNative(url);
+
+    _status = ok
+        ? 'URL copied to clipboard!'
+        : 'Copy failed, select URL manually';
+    setState(() {});
+
+    if (ok) {
+      _copyTimer = Timer(const Duration(seconds: 2), () {
+        _status = 'Press [c] to copy URL, then open in browser';
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  Future<bool> _copyNative(String text) async {
+    try {
+      final p = await _spawnAndPipe('wl-copy', [], text);
+      if (p) return true;
+    } catch (_) {}
+    try {
+      final p = await _spawnAndPipe(
+        'xclip', ['-selection', 'clipboard'], text);
+      if (p) return true;
+    } catch (_) {}
+    return ClipboardManager.copy(text);
+  }
+
+  Future<bool> _spawnAndPipe(
+      String cmd, List<String> args, String input) async {
+    try {
+      final proc = await Process.start(cmd, args);
+      proc.stdin.write(input);
+      await proc.stdin.flush();
+      await proc.stdin.close();
+      final code = await proc.exitCode;
+      return code == 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   Component _importPanel() {
@@ -350,17 +373,28 @@ class AppState extends State<CobuddyApp> {
     _status = 'Getting login URL...';
     _copyTimer?.cancel();
     _copyTimer = null;
-    _showCopied = false;
     setState(() {});
     try {
       final result = await _auth.startLoginOfficial();
       _authUrl = result.authUrl;
+      _urlCtrl.text = result.authUrl;
       _panel = _Panel.addUrl;
       _status = 'Press [c] to copy URL, then open in browser';
     } catch (e) {
       _status = 'Failed: $e';
       _panel = _Panel.main;
     }
+    setState(() {});
+  }
+
+  void _advanceToImport() {
+    _copyTimer?.cancel();
+    _copyTimer = null;
+    _panel = _Panel.import;
+    _importFocus = 0;
+    _labelCtrl.text = '';
+    _stateCtrl.text = '';
+    _status = 'Enter a label (optional), then paste the session_code from the URL bar and press Enter';
     setState(() {});
   }
 
