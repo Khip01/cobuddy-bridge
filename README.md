@@ -21,7 +21,15 @@ Multi-account token rotator for CodeBuddy CLI (`codebuddy.ai` -- global version,
 ## Prerequisites
 
 - Dart SDK 3.10.8+
-- `wl-copy` or `xclip` for clipboard (optional, falls back to OSC 52)
+- `wl-copy` or `xclip` for clipboard (optional, Linux only; falls back to OSC 52)
+
+## Platform Support
+
+| Platform | Status |
+|----------|--------|
+| Linux | Primary -- fully tested |
+| macOS | Experimental -- clipboard via OSC 52 only (no wl-copy/xclip) |
+| Windows | Not tested -- bash scripts (`./build`, `./run`) need adaptation |
 
 ## TUI Mode
 

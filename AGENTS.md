@@ -14,6 +14,14 @@ Multi-account token rotator for CodeBuddy CLI (`codebuddy.ai` -- global version,
 - **Crypto**: `package:crypto`
 - **Compile**: `dart compile exe` -> single binary (~9 MB)
 
+### Platform Support
+
+| Platform | Status |
+|----------|--------|
+| Linux | Primary -- fully tested |
+| macOS | Experimental -- clipboard via OSC 52 only (no wl-copy/xclip) |
+| Windows | Not tested -- bash scripts need adaptation |
+
 ### File Structure
 
 ```
