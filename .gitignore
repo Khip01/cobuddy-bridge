@@ -8,5 +8,11 @@ build/
 .DS_Store
 Thumbs.db
 
+# Compiled binary
+/bin/cobuddy_bridge
+
 # Runtime state (but keep AGENTS.md and source)
 *.log
+
+# Misc
+/image.png

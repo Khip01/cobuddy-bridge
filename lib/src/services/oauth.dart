@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 import '../models/config.dart';
+import 'log_store.dart';
 
 // ---------------------------------------------------------------------------
 // OAuth service — OIDC discovery, PKCE, device auth, token exchange, refresh
@@ -31,7 +32,8 @@ class OidcDiscovery {
     tokenEndpoint: j['token_endpoint'] as String? ?? '',
     userinfoEndpoint: j['userinfo_endpoint'] as String? ?? '',
     revocationEndpoint: j['revocation_endpoint'] as String? ?? '',
-    deviceAuthorizationEndpoint: j['device_authorization_endpoint'] as String? ?? '',
+    deviceAuthorizationEndpoint:
+        j['device_authorization_endpoint'] as String? ?? '',
   );
 }
 
@@ -88,23 +90,30 @@ class PendingError implements Exception {
 
 class OAuthClient {
   final Config cfg;
-  final http.Client _hc = http.Client();
+  final http.Client _hc;
   OidcDiscovery? _meta;
   DateTime _metaAt = DateTime(1);
 
-  OAuthClient(this.cfg);
+  OAuthClient(this.cfg, {http.Client? client}) : _hc = client ?? http.Client();
 
   Future<OidcDiscovery> discover() async {
     if (_meta != null && DateTime.now().difference(_metaAt).inHours < 1) {
       return _meta!;
     }
-    final u = '${cfg.issuer.replaceAll(RegExp(r'/+$'), '')}/.well-known/openid-configuration';
-    final resp = await _hc.get(Uri.parse(u), headers: {'Accept': 'application/json'});
+    final u =
+        '${cfg.issuer.replaceAll(RegExp(r'/+$'), '')}/.well-known/openid-configuration';
+    LogStore.debug('oauth', 'Discover $u');
+    final resp = await _hc.get(
+      Uri.parse(u),
+      headers: {'Accept': 'application/json'},
+    );
     if (resp.statusCode != 200) {
+      LogStore.error('oauth', 'Discover failed: HTTP ${resp.statusCode}');
       throw Exception('discover $u: HTTP ${resp.statusCode}: ${resp.body}');
     }
     _meta = OidcDiscovery.fromJson(jsonDecode(resp.body));
     _metaAt = DateTime.now();
+    LogStore.debug('oauth', 'Discovery OK');
     return _meta!;
   }
 
@@ -120,7 +129,9 @@ class OAuthClient {
   /// Build authorization URL
   Future<String> buildAuthorizationUrl(String state, String verifier) async {
     final meta = await discover();
-    final challenge = base64Url.encode(sha256.convert(utf8.encode(verifier)).bytes).replaceAll('=', '');
+    final challenge = base64Url
+        .encode(sha256.convert(utf8.encode(verifier)).bytes)
+        .replaceAll('=', '');
     final q = {
       'response_type': 'code',
       'client_id': cfg.clientId,
@@ -130,7 +141,9 @@ class OAuthClient {
       'code_challenge': challenge,
       'code_challenge_method': 'S256',
     };
-    final uri = Uri.parse(meta.authorizationEndpoint).replace(queryParameters: q);
+    final uri = Uri.parse(
+      meta.authorizationEndpoint,
+    ).replace(queryParameters: q);
     return uri.toString();
   }
 
@@ -139,7 +152,10 @@ class OAuthClient {
     final meta = await discover();
     final resp = await _hc.post(
       Uri.parse(meta.tokenEndpoint),
-      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'},
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
       body: {
         'grant_type': 'authorization_code',
         'code': code,
@@ -149,6 +165,7 @@ class OAuthClient {
       },
     );
     if (resp.statusCode != 200) {
+      LogStore.error('oauth', 'Exchange code: HTTP ${resp.statusCode}');
       throw Exception('exchange: HTTP ${resp.statusCode}: ${resp.body}');
     }
     return _parseToken(resp.body);
@@ -159,7 +176,10 @@ class OAuthClient {
     final meta = await discover();
     final resp = await _hc.post(
       Uri.parse(meta.tokenEndpoint),
-      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'},
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
       body: {
         'grant_type': 'refresh_token',
         'refresh_token': refreshToken,
@@ -168,6 +188,7 @@ class OAuthClient {
       },
     );
     if (resp.statusCode != 200) {
+      LogStore.error('oauth', 'Refresh: HTTP ${resp.statusCode}');
       throw Exception('refresh: HTTP ${resp.statusCode}: ${resp.body}');
     }
     return _parseToken(resp.body);
@@ -177,11 +198,16 @@ class OAuthClient {
   Future<DeviceAuthResponse> deviceAuth() async {
     final meta = await discover();
     if (meta.deviceAuthorizationEndpoint.isEmpty) {
-      throw Exception('issuer does not advertise device_authorization_endpoint');
+      throw Exception(
+        'issuer does not advertise device_authorization_endpoint',
+      );
     }
     final resp = await _hc.post(
       Uri.parse(meta.deviceAuthorizationEndpoint),
-      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'},
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
       body: {'client_id': cfg.clientId, 'scope': cfg.scopes},
     );
     if (resp.statusCode != 200) {
@@ -203,7 +229,10 @@ class OAuthClient {
     final meta = await discover();
     final resp = await _hc.post(
       Uri.parse(meta.tokenEndpoint),
-      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'},
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
       body: {
         'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
         'device_code': deviceCode,
@@ -227,7 +256,10 @@ class OAuthClient {
       if (meta.userinfoEndpoint.isEmpty) return null;
       final resp = await _hc.get(
         Uri.parse(meta.userinfoEndpoint),
-        headers: {'Authorization': 'Bearer $accessToken', 'Accept': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer $accessToken',
+          'Accept': 'application/json',
+        },
       );
       if (resp.statusCode != 200) return null;
       return jsonDecode(resp.body) as Map<String, dynamic>;
@@ -237,24 +269,36 @@ class OAuthClient {
   }
 
   /// Quota probe — checks billing/quota endpoint
-  Future<({int status, String body, String? error})> quotaProbe(String accessToken) async {
+  Future<({int status, String body, String? error})> quotaProbe(
+    String accessToken,
+  ) async {
     if (cfg.quotaProbeUrl.isEmpty) {
       return (status: 0, body: '', error: 'quota probe URL not configured');
     }
     try {
       final resp = await _hc.get(
         Uri.parse(cfg.quotaProbeUrl),
-        headers: {'Authorization': 'Bearer $accessToken', 'Accept': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer $accessToken',
+          'Accept': 'application/json',
+        },
+      );
+      LogStore.debug(
+        'oauth',
+        'Quota probe: HTTP ${resp.statusCode} (${resp.body.length} bytes)',
       );
       return (status: resp.statusCode, body: resp.body, error: null);
     } catch (e) {
+      LogStore.error('oauth', 'Quota probe network error: $e');
       return (status: 0, body: '', error: e.toString());
     }
   }
 
   /// Fetch token by state (CodeBuddy's official flow)
   Future<TokenResponse> fetchTokenByState(String state) async {
-    final url = '${cfg.codebuddyApiBase.replaceAll(RegExp(r'/+$'), '')}/v2/plugin/auth/token?state=$state';
+    final url =
+        '${cfg.codebuddyApiBase.replaceAll(RegExp(r'/+$'), '')}/v2/plugin/auth/token?state=$state';
+    LogStore.info('oauth', 'Fetch token by state');
     final resp = await _hc.get(
       Uri.parse(url),
       headers: {
@@ -266,17 +310,21 @@ class OAuthClient {
       },
     );
     if (resp.statusCode != 200) {
+      LogStore.error('oauth', 'Fetch token: HTTP ${resp.statusCode}');
       throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
     }
     final wrapper = jsonDecode(resp.body) as Map;
     final code = wrapper['code'] as int? ?? -1;
     if (code != 0 || wrapper['data'] == null) {
+      LogStore.warning('oauth', 'Token not ready: code=$code');
       throw Exception('auth not ready: code=$code msg=${wrapper['msg']}');
     }
     final d = wrapper['data'] as Map;
     return TokenResponse(
-      accessToken: d['accessToken'] as String? ?? d['access_token'] as String? ?? '',
-      refreshToken: d['refreshToken'] as String? ?? d['refresh_token'] as String? ?? '',
+      accessToken:
+          d['accessToken'] as String? ?? d['access_token'] as String? ?? '',
+      refreshToken:
+          d['refreshToken'] as String? ?? d['refresh_token'] as String? ?? '',
       idToken: d['idToken'] as String? ?? d['id_token'] as String? ?? '',
       tokenType: d['tokenType'] as String? ?? d['token_type'] as String? ?? '',
       scope: d['scope'] as String? ?? '',
@@ -287,20 +335,28 @@ class OAuthClient {
 
   /// Start official CodeBuddy login
   Future<({String authUrl, String state})> startLoginOfficial() async {
-    final url = '${cfg.codebuddyApiBase.replaceAll(RegExp(r'/+$'), '')}/v2/plugin/auth/state?platform=cli';
+    final url =
+        '${cfg.codebuddyApiBase.replaceAll(RegExp(r'/+$'), '')}/v2/plugin/auth/state?platform=cli';
+    LogStore.info('oauth', 'Start login official');
     final resp = await _hc.post(
       Uri.parse(url),
-      headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
     );
     if (resp.statusCode != 200) {
+      LogStore.error('oauth', 'Start login: HTTP ${resp.statusCode}');
       throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
     }
     final wrapper = jsonDecode(resp.body) as Map;
     final code = wrapper['code'] as int? ?? -1;
     if (code != 0 || wrapper['data'] == null) {
+      LogStore.error('oauth', 'Start login: no authUrl code=$code');
       throw Exception('no authUrl: code=$code msg=${wrapper['msg']}');
     }
     final d = wrapper['data'] as Map;
+    LogStore.success('oauth', 'Auth URL obtained');
     return (
       authUrl: d['authUrl'] as String? ?? d['auth_url'] as String? ?? '',
       state: d['state'] as String? ?? '',

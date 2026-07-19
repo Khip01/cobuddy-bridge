@@ -6,6 +6,7 @@ import '../models/account.dart';
 import '../models/config.dart';
 import '../services/oauth.dart';
 import '../services/rotator.dart';
+import '../services/log_store.dart';
 
 // ---------------------------------------------------------------------------
 // Proxy server — HTTP REST API + OpenAI-compatible proxy
@@ -25,14 +26,37 @@ class ProxyServer {
     required this.rotator,
   });
 
-  Future<void> run() async {
-    final server = await HttpServer.bind(cfg.serverHost, cfg.serverPort);
-    print('Server on http://${cfg.serverHost}:${cfg.serverPort}');
-    server.listen((req) => _handle(req));
+  /// Start server, try ports starting from [cfg.serverPort] until one works.
+  /// Returns the bound URL (http://host:port/v1).
+  Future<String> run() async {
+    var port = cfg.serverPort;
+    const maxAttempts = 100;
+    final endPort = port + maxAttempts;
+    while (port < endPort) {
+      try {
+        final server = await HttpServer.bind(cfg.serverHost, port);
+        server.listen((req) => _handle(req));
+        final url = 'http://${cfg.serverHost}:$port/v1';
+        LogStore.info('server', 'Server started at $url');
+        return url;
+      } on SocketException catch (_) {
+        if (port >= endPort - 1) {
+          LogStore.error(
+            'server',
+            'No available port after trying $maxAttempts ports',
+          );
+          rethrow;
+        }
+        LogStore.warning('server', 'Port $port in use, trying ${port + 1}');
+        port++;
+      }
+    }
+    throw Exception('Could not bind to any port');
   }
 
   Future<void> _handle(HttpRequest req) async {
     final p = req.uri.path;
+    if (p != '/v1/logs') LogStore.debug('proxy', '${req.method} $p');
 
     // CORS preflight
     if (req.method == 'OPTIONS') {
@@ -43,29 +67,49 @@ class ProxyServer {
     }
 
     try {
-      if (p == '/' || p == '/v1/health') _health(req);
-      else if (p == '/openapi.json') _openapi(req);
+      if (p == '/' || p == '/v1/health')
+        _health(req);
+      else if (p == '/openapi.json')
+        _openapi(req);
       else if (p == '/v1/config') {
-        if (req.method == 'GET') _getConfig(req);
-        else if (req.method == 'PATCH' || req.method == 'POST') await _patchConfig(req);
-        else _methodNotAllowed(req);
-      }
-      else if (p == '/v1/logs') _logs(req);
-      else if (p == '/v1/connections') _listConnections(req);
-      else if (p == '/v1/connections/login-official') await _startLoginOfficial(req);
-      else if (p == '/v1/connections/import') await _importConnection(req);
-      else if (p == '/v1/connections/import-session') await _importSession(req);
-      else if (p == '/v1/connections/test-all') await _testAll(req);
-      else if (p.startsWith('/v1/connections/')) await _handleConnectionById(req, p);
-      else if (p == '/v1/rotation/rotate') await _rotateNow(req);
-      else if (p == '/v1/rotation/state') _rotationState(req);
-      else if (p == '/v1/rotation/strategy') _strategy(req);
-      else if (p == '/v1/token') await _getToken(req);
-      else if (p == '/v1/probe') await _probe(req);
-      else if (p == '/v1/chat/completions') await _proxyChat(req);
-      else if (p == '/v1/models') _models(req);
-      else if (p.startsWith('/v1/')) _notFound(req);
-      else _notFound(req);
+        if (req.method == 'GET')
+          _getConfig(req);
+        else if (req.method == 'PATCH' || req.method == 'POST')
+          await _patchConfig(req);
+        else
+          _methodNotAllowed(req);
+      } else if (p == '/v1/logs')
+        _logs(req);
+      else if (p == '/v1/connections')
+        _listConnections(req);
+      else if (p == '/v1/connections/login-official')
+        await _startLoginOfficial(req);
+      else if (p == '/v1/connections/import')
+        await _importConnection(req);
+      else if (p == '/v1/connections/import-session')
+        await _importSession(req);
+      else if (p == '/v1/connections/test-all')
+        await _testAll(req);
+      else if (p.startsWith('/v1/connections/'))
+        await _handleConnectionById(req, p);
+      else if (p == '/v1/rotation/rotate')
+        await _rotateNow(req);
+      else if (p == '/v1/rotation/state')
+        _rotationState(req);
+      else if (p == '/v1/rotation/strategy')
+        _strategy(req);
+      else if (p == '/v1/token')
+        await _getToken(req);
+      else if (p == '/v1/probe')
+        await _probe(req);
+      else if (p == '/v1/chat/completions')
+        await _proxyChat(req);
+      else if (p == '/v1/models')
+        _models(req);
+      else if (p.startsWith('/v1/'))
+        _notFound(req);
+      else
+        _notFound(req);
     } catch (e) {
       _error(req, 500, e.toString());
     }
@@ -73,11 +117,23 @@ class ProxyServer {
 
   void _cors(HttpRequest req) {
     req.response.headers.set('Access-Control-Allow-Origin', '*');
-    req.response.headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, Origin, X-Requested-With');
-    req.response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    req.response.headers.set(
+      'Access-Control-Allow-Headers',
+      'Authorization, Content-Type, Origin, X-Requested-With',
+    );
+    req.response.headers.set(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PATCH, DELETE, OPTIONS',
+    );
   }
 
-  void _health(HttpRequest req) => _ok(req, {'ok': true, 'version': '1.0.0', 'started_at': startedAt.toIso8601String(), 'accounts': store.loadAll().length, 'strategy': cfg.rotationStrategy.name});
+  void _health(HttpRequest req) => _ok(req, {
+    'ok': true,
+    'version': '1.0.0',
+    'started_at': startedAt.toIso8601String(),
+    'accounts': store.loadAll().length,
+    'strategy': cfg.rotationStrategy.name,
+  });
 
   void _openapi(HttpRequest req) => _okJson(req, 200, '{"openapi":"3.0.0"}');
 
@@ -91,12 +147,28 @@ class ProxyServer {
     _ok(req, cfg.snapshot());
   }
 
-  void _logs(HttpRequest req) => _ok(req, {'logs': []});
+  void _logs(HttpRequest req) {
+    final logs = LogStore.latestFirst
+        .map(
+          (e) => {
+            'time': e.time.toIso8601String(),
+            'level': e.level.name,
+            'source': e.source,
+            'message': e.message,
+          },
+        )
+        .toList();
+    _ok(req, {'logs': logs});
+  }
 
   void _listConnections(HttpRequest req) {
     final state = store.loadState();
     final conns = store.loadAll().map((a) => _viewAccount(a, state)).toList();
-    _ok(req, {'connections': conns, 'current_id': state.currentId, 'strategy': cfg.rotationStrategy.name});
+    _ok(req, {
+      'connections': conns,
+      'current_id': state.currentId,
+      'strategy': cfg.rotationStrategy.name,
+    });
   }
 
   Future<void> _startLoginOfficial(HttpRequest req) async {
@@ -105,7 +177,8 @@ class ProxyServer {
       _ok(req, {
         'auth_url': result.authUrl,
         'state': result.state,
-        'message': 'Open auth_url in any browser. After login, copy the `session_code` parameter from the URL bar (or the `state` param) and POST it to /v1/connections/import-session',
+        'message':
+            'Open auth_url in any browser. After login, copy the `session_code` parameter from the URL bar (or the `state` param) and POST it to /v1/connections/import-session',
       });
     } catch (e) {
       _error(req, 502, e.toString());
@@ -115,22 +188,27 @@ class ProxyServer {
   Future<void> _importConnection(HttpRequest req) async {
     final body = await utf8.decodeStream(req);
     final j = jsonDecode(body) as Map;
-    if (j['access_token'] == null) { _error(req, 400, 'access_token required'); return; }
+    if (j['access_token'] == null) {
+      _error(req, 400, 'access_token required');
+      return;
+    }
 
     String? userId = j['user_id'] as String?;
     String email = j['email'] as String? ?? '';
     if (userId == null) {
       final info = await auth.userInfo(j['access_token'] as String);
       if (info != null) {
-        userId = info['sub'] as String? ?? info['preferred_username'] as String?;
+        userId =
+            info['sub'] as String? ?? info['preferred_username'] as String?;
         if (email.isEmpty) email = info['email'] as String? ?? '';
       }
     }
 
     final exp = Duration(seconds: (j['expires_in'] as int? ?? 3600));
+    final label = j['label'] as String? ?? 'imported';
     final a = Account(
       id: accountIdFromToken(j['access_token'] as String),
-      label: j['label'] as String? ?? 'imported',
+      label: label,
       userId: userId ?? '',
       email: email,
       accessToken: j['access_token'] as String,
@@ -144,6 +222,7 @@ class ProxyServer {
       note: j['note'] as String? ?? '',
     );
     store.save(a);
+    LogStore.success('proxy', 'Imported: $label (${a.id})');
     _ok(req, _viewAccount(a, store.loadState()));
   }
 
@@ -157,9 +236,10 @@ class ProxyServer {
     }
     try {
       final token = await auth.fetchTokenByState(stateParam);
+      final label = j['label'] as String? ?? 'session';
       final a = Account(
         id: accountIdFromToken(token.accessToken),
-        label: j['label'] as String? ?? 'session',
+        label: label,
         userId: token.userId,
         accessToken: token.accessToken,
         refreshToken: token.refreshToken,
@@ -172,51 +252,78 @@ class ProxyServer {
         note: 'imported via session_code',
       );
       store.save(a);
+      LogStore.success('proxy', 'Session imported: $label (${a.id})');
       _ok(req, _viewAccount(a, store.loadState()));
     } catch (e) {
-      _error(req, 502, '${e}\nhint: session_code may have expired; try logging in again and capture the fresh code');
+      LogStore.error('proxy', 'Session import failed: $e');
+      _error(
+        req,
+        502,
+        '${e}\nhint: session_code may have expired; try logging in again and capture the fresh code',
+      );
     }
   }
 
   Future<void> _testAll(HttpRequest req) async {
+    LogStore.info('proxy', 'Testing all accounts');
     await rotator.probeAll();
     final state = store.loadState();
     final conns = store.loadAll().map((a) => _viewAccount(a, state)).toList();
-    _ok(req, {'connections': conns, 'current_id': state.currentId, 'strategy': cfg.rotationStrategy.name});
+    _ok(req, {
+      'connections': conns,
+      'current_id': state.currentId,
+      'strategy': cfg.rotationStrategy.name,
+    });
   }
 
   Future<void> _handleConnectionById(HttpRequest req, String p) async {
     final parts = p.split('/');
-    if (parts.length < 3) { _notFound(req); return; }
+    if (parts.length < 3) {
+      _notFound(req);
+      return;
+    }
     final id = parts[3];
     final sub = parts.length > 4 ? parts[4] : '';
 
     if (sub == 'test') {
       final a = await rotator.probeAccount(id);
-      if (a == null) { _notFound(req); return; }
+      if (a == null) {
+        _notFound(req);
+        return;
+      }
       _ok(req, _viewAccount(a, store.loadState()));
       return;
     }
     if (sub == 'reset') {
       store.markChecked(id, AcctState.unknown, 'manually reset');
       final a = store.find(id);
-      if (a == null) { _notFound(req); return; }
+      if (a == null) {
+        _notFound(req);
+        return;
+      }
       _ok(req, _viewAccount(a, store.loadState()));
       return;
     }
 
     if (req.method == 'GET') {
       final a = store.find(id);
-      if (a == null) { _notFound(req); return; }
+      if (a == null) {
+        _notFound(req);
+        return;
+      }
       _ok(req, _viewAccount(a, store.loadState()));
     } else if (req.method == 'DELETE') {
       store.delete(id);
+      LogStore.info('proxy', 'Deleted: $id');
       _ok(req, {'ok': true, 'deleted': id});
     } else if (req.method == 'PATCH' || req.method == 'POST') {
       final body = await utf8.decodeStream(req);
       final j = jsonDecode(body) as Map;
       final a = store.find(id);
-      if (a == null) { _notFound(req); return; }
+      if (a == null) {
+        _notFound(req);
+        return;
+      }
       if (j['enabled'] != null) a.enabled = j['enabled'] as bool;
       if (j['label'] != null) a.label = j['label'] as String;
       if (j['priority'] != null) a.priority = (j['priority'] as num).toInt();
@@ -230,7 +337,11 @@ class ProxyServer {
 
   Future<void> _rotateNow(HttpRequest req) async {
     final acc = rotator.forceRotate();
-    if (acc == null) { _error(req, 500, 'no accounts'); return; }
+    if (acc == null) {
+      _error(req, 500, 'no accounts');
+      return;
+    }
+    LogStore.info('proxy', 'Rotate: ${acc.label}');
     _ok(req, {'ok': true, 'account': _viewAccount(acc, store.loadState())});
   }
 
@@ -261,7 +372,12 @@ class ProxyServer {
 
   Future<void> _getToken(HttpRequest req) async {
     final acc = await rotator.get();
-    if (acc == null) { _error(req, 500, 'no accounts'); return; }
+    if (acc == null) {
+      LogStore.warning('proxy', 'Get token: no accounts');
+      _error(req, 500, 'no accounts');
+      return;
+    }
+    LogStore.info('proxy', 'Token issued: ${acc.label} (${acc.id})');
     req.response.statusCode = 200;
     req.response.headers.contentType = ContentType.text;
     req.response.write(acc.accessToken);
@@ -270,31 +386,59 @@ class ProxyServer {
 
   Future<void> _probe(HttpRequest req) async {
     final candidates = [
-      'console', 'codebuddy-cli', 'codebuddy-cli-public', 'codebuddy',
-      'codebuddy-code', 'codebuddy-public', 'codebuddy-code-cli',
-      'codebuddy-ide', 'codebuddy-web', 'codebuddy-vscode', 'codebuddy-jb',
-      'copilot-cli', 'copilot', 'tencent-copilot', 'tencent-codebuddy',
-      'Tencent-Cloud.coding-copilot', 'Tencent-Cloud.coding-copilot-vs',
+      'console',
+      'codebuddy-cli',
+      'codebuddy-cli-public',
+      'codebuddy',
+      'codebuddy-code',
+      'codebuddy-public',
+      'codebuddy-code-cli',
+      'codebuddy-ide',
+      'codebuddy-web',
+      'codebuddy-vscode',
+      'codebuddy-jb',
+      'copilot-cli',
+      'copilot',
+      'tencent-copilot',
+      'tencent-codebuddy',
+      'Tencent-Cloud.coding-copilot',
+      'Tencent-Cloud.coding-copilot-vs',
     ];
     final results = <Map<String, dynamic>>[];
     for (final cid in candidates) {
       try {
         final meta = await auth.discover();
-        final u = '${meta.authorizationEndpoint}?client_id=$cid&response_type=code&redirect_uri=${cfg.bridgeUrl}/auth/callback&scope=${cfg.scopes}&state=probe&code_challenge=Yh-npV_wGErE-5M4oFxsZN2FY0F4LCeOS9kpfXvgKdo&code_challenge_method=S256';
-        final resp = await http.get(Uri.parse(u), headers: {'Accept': 'text/html'});
+        final u =
+            '${meta.authorizationEndpoint}?client_id=$cid&response_type=code&redirect_uri=${cfg.bridgeUrl}/auth/callback&scope=${cfg.scopes}&state=probe&code_challenge=Yh-npV_wGErE-5M4oFxsZN2FY0F4LCeOS9kpfXvgKdo&code_challenge_method=S256';
+        final resp = await http.get(
+          Uri.parse(u),
+          headers: {'Accept': 'text/html'},
+        );
         final text = resp.body;
         var result = 'no-response';
         var msg = '';
-        if (text.contains('kc-form-login') && !text.contains('result-icon error-icon')) {
+        if (text.contains('kc-form-login') &&
+            !text.contains('result-icon error-icon')) {
           result = 'valid-client-login-form';
           msg = 'client_id is registered; realm ready to authenticate you';
-        } else if (text.contains('账号不存在') || text.contains('account does not exist')) {
+        } else if (text.contains('账号不存在') ||
+            text.contains('account does not exist')) {
           result = 'valid-client-no-account';
           msg = 'client_id registered, but your account is NOT in this realm.';
         }
-        results.add({'client_id': cid, 'http_status': resp.statusCode, 'result': result, 'error_message': msg, 'response_bytes': text.length});
+        results.add({
+          'client_id': cid,
+          'http_status': resp.statusCode,
+          'result': result,
+          'error_message': msg,
+          'response_bytes': text.length,
+        });
       } catch (e) {
-        results.add({'client_id': cid, 'result': 'error', 'error_message': e.toString()});
+        results.add({
+          'client_id': cid,
+          'result': 'error',
+          'error_message': e.toString(),
+        });
       }
     }
     _ok(req, {'issuer': cfg.issuer, 'results': results});
@@ -308,6 +452,7 @@ class ProxyServer {
     final body = await utf8.decodeStream(req);
     final acc = await rotator.get();
     if (acc == null) {
+      LogStore.warning('proxy', 'Chat: no accounts');
       req.response.statusCode = 503;
       req.response.headers.contentType = ContentType.json;
       req.response.write('{"error":"no accounts","rotate":true}');
@@ -315,9 +460,15 @@ class ProxyServer {
       return;
     }
 
+    LogStore.info('proxy', 'Chat proxy via ${acc.label} (${acc.id})');
     final upstream = await http.post(
-      Uri.parse('${cfg.codebuddyApiBase.replaceAll(RegExp(r'/+$'), '')}/v2/chat/completions'),
-      headers: {'Authorization': 'Bearer ${acc.accessToken}', 'Content-Type': 'application/json'},
+      Uri.parse(
+        '${cfg.codebuddyApiBase.replaceAll(RegExp(r'/+$'), '')}/v2/chat/completions',
+      ),
+      headers: {
+        'Authorization': 'Bearer ${acc.accessToken}',
+        'Content-Type': 'application/json',
+      },
       body: body,
     );
     req.response.statusCode = upstream.statusCode;
@@ -326,14 +477,25 @@ class ProxyServer {
     await req.response.close();
 
     if (upstream.statusCode == 401 || upstream.statusCode == 403) {
-      store.markChecked(acc.id, AcctState.expired, 'upstream HTTP ${upstream.statusCode}');
+      LogStore.warning(
+        'proxy',
+        'Upstream 401/403 for ${acc.id}, marking expired',
+      );
+      store.markChecked(
+        acc.id,
+        AcctState.expired,
+        'upstream HTTP ${upstream.statusCode}',
+      );
     }
   }
 
-  void _models(HttpRequest req) => _ok(req, {'data': [
-    {'id': 'gpt-5.4', 'object': 'model', 'owned_by': 'codebuddy'},
-    {'id': 'gpt-5.5', 'object': 'model', 'owned_by': 'codebuddy'},
-  ], 'object': 'list'});
+  void _models(HttpRequest req) => _ok(req, {
+    'data': [
+      {'id': 'gpt-5.4', 'object': 'model', 'owned_by': 'codebuddy'},
+      {'id': 'gpt-5.5', 'object': 'model', 'owned_by': 'codebuddy'},
+    ],
+    'object': 'list',
+  });
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -350,8 +512,12 @@ class ProxyServer {
     'state_msg': a.stateMsg,
     'expires_at': a.expiresAt.toIso8601String(),
     'created_at': a.createdAt.toIso8601String(),
-    'last_used_at': a.lastUsedAt.year > 2000 ? a.lastUsedAt.toIso8601String() : null,
-    'last_check': a.lastCheckAt.year > 2000 ? a.lastCheckAt.toIso8601String() : null,
+    'last_used_at': a.lastUsedAt.year > 2000
+        ? a.lastUsedAt.toIso8601String()
+        : null,
+    'last_check': a.lastCheckAt.year > 2000
+        ? a.lastCheckAt.toIso8601String()
+        : null,
     'use_count': a.useCount,
     'note': a.note,
     'is_current': state.currentId == a.id,
@@ -374,7 +540,13 @@ class ProxyServer {
     req.response.close();
   }
 
-  void _error(HttpRequest req, int status, String msg) => _okJson(req, status, jsonEncode({'error': msg}));
-  void _notFound(HttpRequest req) => _okJson(req, 404, jsonEncode({'error': 'not found'}));
-  void _methodNotAllowed(HttpRequest req) => _okJson(req, 405, jsonEncode({'error': 'method not allowed'}));
+  void _error(HttpRequest req, int status, String msg) =>
+      _okJson(req, status, jsonEncode({'error': msg}));
+  void _notFound(HttpRequest req) =>
+      _okJson(req, 404, jsonEncode({'error': 'not found'}));
+  void _methodNotAllowed(HttpRequest req) =>
+      _okJson(req, 405, jsonEncode({'error': 'method not allowed'}));
+
+  /// Public wrapper for testing
+  Future<void> handle(HttpRequest req) => _handle(req);
 }

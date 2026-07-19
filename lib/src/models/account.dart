@@ -20,8 +20,8 @@ class RotatorState {
     DateTime? lastRotationAt,
     DateTime? nextRotationAt,
     this.requestsSinceLast = 0,
-  })  : lastRotationAt = lastRotationAt ?? DateTime.now(),
-        nextRotationAt = nextRotationAt ?? DateTime.now();
+  }) : lastRotationAt = lastRotationAt ?? DateTime.now(),
+       nextRotationAt = nextRotationAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
     'current_id': currentId,
@@ -32,8 +32,12 @@ class RotatorState {
 
   factory RotatorState.fromJson(Map<String, dynamic> j) => RotatorState(
     currentId: j['current_id'] as String? ?? '',
-    lastRotationAt: DateTime.tryParse(j['last_rotation_at'] as String? ?? '') ?? DateTime.now(),
-    nextRotationAt: DateTime.tryParse(j['next_rotation_at'] as String? ?? '') ?? DateTime.now(),
+    lastRotationAt:
+        DateTime.tryParse(j['last_rotation_at'] as String? ?? '') ??
+        DateTime.now(),
+    nextRotationAt:
+        DateTime.tryParse(j['next_rotation_at'] as String? ?? '') ??
+        DateTime.now(),
     requestsSinceLast: j['requests_since_last'] as int? ?? 0,
   );
 }
@@ -87,12 +91,13 @@ class Account {
     this.tokenType = '',
     this.useCount = 0,
     this.note = '',
-  })  : createdAt = createdAt ?? DateTime.now(),
-        lastUsedAt = lastUsedAt ?? DateTime(1),
-        lastCheckAt = lastCheckAt ?? DateTime(1),
-        expiresAt = expiresAt ?? DateTime.now().add(const Duration(hours: 1));
+  }) : createdAt = createdAt ?? DateTime.now(),
+       lastUsedAt = lastUsedAt ?? DateTime(1),
+       lastCheckAt = lastCheckAt ?? DateTime(1),
+       expiresAt = expiresAt ?? DateTime.now().add(const Duration(hours: 1));
 
-  bool get tokenIsExpired => expiresAt.isBefore(DateTime.now().add(const Duration(seconds: 30)));
+  bool get tokenIsExpired =>
+      expiresAt.isBefore(DateTime.now().add(const Duration(seconds: 30)));
 
   bool get isHealthy => enabled && state == AcctState.ok;
 
@@ -104,8 +109,12 @@ class Account {
     'enabled': enabled,
     'priority': priority,
     'created_at': createdAt.toIso8601String(),
-    'last_used_at': lastUsedAt.year > 2000 ? lastUsedAt.toIso8601String() : null,
-    'last_check_at': lastCheckAt.year > 2000 ? lastCheckAt.toIso8601String() : null,
+    'last_used_at': lastUsedAt.year > 2000
+        ? lastUsedAt.toIso8601String()
+        : null,
+    'last_check_at': lastCheckAt.year > 2000
+        ? lastCheckAt.toIso8601String()
+        : null,
     'last_error': lastError,
     'state': state.name,
     'state_message': stateMsg,
@@ -130,9 +139,14 @@ class Account {
       email: j['email'] as String? ?? '',
       enabled: j['enabled'] as bool? ?? true,
       priority: j['priority'] as int? ?? 0,
-      createdAt: DateTime.tryParse(j['created_at'] as String? ?? '') ?? DateTime.now(),
-      lastUsedAt: las.isNotEmpty ? (DateTime.tryParse(las) ?? DateTime(1)) : DateTime(1),
-      lastCheckAt: lcs.isNotEmpty ? (DateTime.tryParse(lcs) ?? DateTime(1)) : DateTime(1),
+      createdAt:
+          DateTime.tryParse(j['created_at'] as String? ?? '') ?? DateTime.now(),
+      lastUsedAt: las.isNotEmpty
+          ? (DateTime.tryParse(las) ?? DateTime(1))
+          : DateTime(1),
+      lastCheckAt: lcs.isNotEmpty
+          ? (DateTime.tryParse(lcs) ?? DateTime(1))
+          : DateTime(1),
       lastError: j['last_error'] as String? ?? '',
       state: AcctState.values.firstWhere(
         (e) => e.name == (j['state'] as String? ?? 'unknown'),
@@ -142,7 +156,10 @@ class Account {
       accessToken: j['access_token'] as String? ?? '',
       refreshToken: j['refresh_token'] as String? ?? '',
       idToken: j['id_token'] as String? ?? '',
-      expiresAt: eps.isNotEmpty ? (DateTime.tryParse(eps) ?? DateTime.now().add(const Duration(hours: 1))) : DateTime.now().add(const Duration(hours: 1)),
+      expiresAt: eps.isNotEmpty
+          ? (DateTime.tryParse(eps) ??
+                DateTime.now().add(const Duration(hours: 1)))
+          : DateTime.now().add(const Duration(hours: 1)),
       scope: j['scope'] as String? ?? '',
       tokenType: j['token_type'] as String? ?? '',
       useCount: j['use_count'] as int? ?? 0,
@@ -156,13 +173,26 @@ class Account {
 // ---------------------------------------------------------------------------
 
 class Store {
-  void _ensure() { Directory(acctsDir).createSync(recursive: true); }
+  final String acctsDir;
+  final String stateFilePath;
+
+  static const defaultAcctsDir = '/home/khip/.config/codebuddy/accounts';
+  static const defaultStateFilePath = '/home/khip/.config/codebuddy/state.json';
+
+  Store({String? acctsDir, String? stateFilePath})
+    : acctsDir = acctsDir ?? defaultAcctsDir,
+      stateFilePath = stateFilePath ?? defaultStateFilePath;
+
+  void _ensure() {
+    Directory(acctsDir).createSync(recursive: true);
+  }
 
   List<Account> loadAll() {
     _ensure();
     final d = Directory(acctsDir);
     if (!d.existsSync()) return [];
-    return d.listSync()
+    return d
+        .listSync()
         .whereType<File>()
         .map((f) => Account.fromJson(jsonDecode(f.readAsStringSync())))
         .toList();
@@ -204,7 +234,15 @@ class Store {
     save(a);
   }
 
-  void updateTokens(String id, String accessToken, String refreshToken, String idToken, String tokenType, String scope, DateTime expiresAt) {
+  void updateTokens(
+    String id,
+    String accessToken,
+    String refreshToken,
+    String idToken,
+    String tokenType,
+    String scope,
+    DateTime expiresAt,
+  ) {
     final a = find(id);
     if (a == null) return;
     a.accessToken = accessToken;
@@ -236,12 +274,4 @@ class Store {
 String accountIdFromToken(String token) {
   final hash = sha256.convert(utf8.encode(token)).toString();
   return hash.substring(0, 16);
-}
-
-int _nextPriority(Store store) {
-  var max = 0;
-  for (final a in store.loadAll()) {
-    if (a.priority > max) max = a.priority;
-  }
-  return max + 1;
 }

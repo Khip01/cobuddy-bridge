@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+dart pub get
+dart compile exe bin/cobuddy_bridge.dart -o bin/cobuddy_bridge

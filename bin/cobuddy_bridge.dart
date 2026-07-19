@@ -1,5 +1,5 @@
 import 'package:cobuddy_bridge/cobuddy_bridge.dart' as cb;
 
-void main(List<String> args) {
-  cb.runCobuddyApp(args);
+Future<void> main(List<String> args) async {
+  await cb.runCobuddyApp(args);
 }
