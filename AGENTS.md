@@ -41,7 +41,7 @@ cobuddy-bridge/
 │       ├── server/
 │       │   └── proxy.dart          # HTTP server, 18+ REST endpoints, OpenAI proxy
 │       └── tui/
-│           └── app.dart            # Nocterm TUI (8 panels, log sidebar/fullscreen, 1100+ lines)
+│           └── app.dart            # Nocterm TUI (9 panels, log sidebar/fullscreen, 1650+ lines)
 ├── test/
 │   ├── models/
 │   ├── server/
@@ -156,7 +156,7 @@ Three modes:
 
 Log cleared with `C` (all) or `O` (entries before today).
 
-## TUI Panels (8 panels)
+## TUI Panels (9 panels)
 
 `AppState._panel` field controls which panel is shown. All panels are components rendered by `_body()`:
 
@@ -168,6 +168,7 @@ Log cleared with `C` (all) or `O` (entries before today).
 | Delete | `_Panel.delete` | `d` | Confirmation dialog with account name + id |
 | Strategy | `_Panel.strategy` | `r` | 4-option radio list with current indicator |
 | Request Count | `_Panel.requestCount` | Enter in Strategy | N input for request-count strategies |
+| Port Config | `_Panel.portConfig` | `p` | Change proxy server port (requires restart) |
 | Quit | `_Panel.quit` | `q` | Confirmation dialog with server URL warning |
 | Help | `_Panel.help` | `h` | Scrollable help screen with all key bindings and docs |
 
@@ -185,9 +186,10 @@ All dialog panels use `Container` with `BoxDecoration(border: ...)` centered via
 | `r` | Main | Open rotation strategy selector |
 | `R` | Main | Force rotate to next OK account |
 | `q` | Main | Open quit confirmation dialog |
+| `p` | Main | Open port configuration |
 | `h` | Main | Open help panel |
 | `c` | Main | Copy storage path to clipboard |
-| `↑/↓` | Main, Strategy, Help | Navigate |
+| `↑/↓` | Main, Strategy, Help, Port Config | Navigate |
 | `y/n` | Delete, Quit | Confirm / cancel |
 | `c` | Add URL | Copy auth URL to clipboard |
 | `Enter` | Add URL | Proceed to import panel |
@@ -195,7 +197,7 @@ All dialog panels use `Container` with `BoxDecoration(border: ...)` centered via
 | `Tab` | Import | Switch focus between Label and State fields |
 | `Enter` | Import | Submit import |
 | `Enter` | Strategy | Select strategy / confirm request count |
-| `Esc` | Import, Strategy, Request Count | Back to previous panel |
+| `Esc` | Import, Strategy, Request Count, Port Config | Back to previous panel |
 | F | Add URL (box) | Click to copy URL |
 | - Path row | Main | Click to copy storage path |
 | `Ctrl+L` | Any | Toggle log sidebar on/off (when log closed) |
@@ -246,6 +248,16 @@ The rotator also auto-refreshes tokens when near expiry (uses `refresh_token`).
 ```
 
 Label auto-deduplication: if "my-session" already exists, creates "my-session(1)", "my-session(2)", etc.
+
+## Port Configuration
+
+The proxy server port is configurable from the TUI (`p` key) and persisted in `config.json` as `server_port`. Default: **20130**.
+
+When the port config panel opens, the TUI dynamically scans a list of recommended ports using `ServerSocket.bind()` and displays which ones are currently free. No static port list -- it checks real system availability.
+
+Recommended ports scanned: `20130, 3010, 4001, 9090, 3001, 5001, 20131, 10000, 18080, 65432`
+
+The port input validates against the 1024-65535 range. Changing the port requires a restart (the server is already bound at startup).
 
 ## LogStore (`lib/src/services/log_store.dart`)
 

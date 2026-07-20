@@ -54,7 +54,7 @@ Accounts: ~/.config/codebuddy/accounts/   [c] copy
     OK  ·  2026-07-19 10:12
     ab1234cd5678ef90  ·  remaining=100
 
-Ready                   [a]dd [d]el [e]nable [s]et [t]est [r]strat [R]otate [Ctrl+L] log [h]elp [q]uit
+Ready                   [a]dd [d]el [e]nable [s]et [t]est [r]strat [R]otate [p]ort [Ctrl+L] log [h]elp [q]uit
 ```
 
 Header displays:
@@ -78,6 +78,7 @@ Each account is rendered as 3 full lines:
 | Delete | Account deletion confirmation |
 | Strategy | Rotation strategy selector (4 options) |
 | Request Count | N input for request-count strategies |
+| Port Config | Change the proxy server port |
 | Quit | Exit confirmation |
 | Help | Scrollable help screen |
 
@@ -95,7 +96,8 @@ Each account is rendered as 3 full lines:
 | `c` | Main | Copy storage path to clipboard |
 | `h` | Main | Open help panel |
 | `q` | Main | Quit (with confirmation) |
-| `↑/↓` | Account list, Strategy, Help | Navigate |
+| `p` | Main | Open port configuration |
+| `↑/↓` | Account list, Strategy, Help, Port Config | Navigate |
 | `y/n` | Delete, Quit | Confirm / cancel |
 | `Enter` | Add URL | Proceed to import panel |
 | `Enter` | Strategy | Select strategy / confirm |
@@ -144,6 +146,18 @@ Four rotation strategies:
 - **request-count-random** -- advance every N API requests, random
 
 Request-count strategies prompt for N (1-999999).
+
+### Port Configuration (`p`)
+
+Change the proxy server port from the TUI (`p` key). The default port is **20130**.
+
+When opening the port config panel, the TUI scans a list of recommended ports and displays which ones are currently available (not in use). Pick one from the list or type any port in the 1024-65535 range.
+
+Recommended ports (scanned dynamically): `20130, 3010, 4001, 9090, 3001, 5001, 20131, 10000, 18080, 65432`
+
+Note: changing the port requires a restart of the application to take effect.
+
+Note: changing the port requires a restart of the application to take effect.
 
 ### Add Account Flow (CodeBuddy-specific)
 

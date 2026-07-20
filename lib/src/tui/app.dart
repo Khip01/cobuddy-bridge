@@ -26,7 +26,7 @@ class CobuddyApp extends StatefulComponent {
   State<CobuddyApp> createState() => AppState();
 }
 
-enum _Panel { main, addUrl, import, delete, strategy, requestCount, quit, help }
+enum _Panel { main, addUrl, import, delete, strategy, requestCount, portConfig, quit, help }
 
 enum _ConfirmAction { none, clearAll, clearOld }
 
@@ -54,6 +54,9 @@ class AppState extends State<CobuddyApp> {
   final _stateCtrl = TextEditingController();
   final _labelCtrl = TextEditingController();
   final _reqCountCtrl = TextEditingController();
+  final _portCtrl = TextEditingController();
+  final Map<int, bool> _portStatus = {};
+  bool _portScanDone = false;
   final _helpScrollCtrl = ScrollController();
   final _logScrollCtrl = ScrollController();
   Timer? _ticker;
@@ -73,6 +76,7 @@ class AppState extends State<CobuddyApp> {
     _stateCtrl.dispose();
     _labelCtrl.dispose();
     _reqCountCtrl.dispose();
+    _portCtrl.dispose();
     _helpScrollCtrl.dispose();
     _logScrollCtrl.dispose();
     super.dispose();
@@ -230,6 +234,10 @@ class AppState extends State<CobuddyApp> {
             _showHelp();
             return true;
           }
+          if (e.logicalKey == LogicalKey.keyP) {
+            _showPortConfig();
+            return true;
+          }
           return false;
         }
 
@@ -328,6 +336,18 @@ class AppState extends State<CobuddyApp> {
           return false;
         }
 
+        if (_panel == _Panel.portConfig) {
+          if (e.logicalKey == LogicalKey.escape) {
+            _backToMain();
+            return true;
+          }
+          if (e.logicalKey == LogicalKey.enter) {
+            _doSetPort();
+            return true;
+          }
+          return false;
+        }
+
         if (_panel == _Panel.quit) {
           if (e.logicalKey == LogicalKey.keyY ||
               e.logicalKey == LogicalKey.enter) {
@@ -417,6 +437,7 @@ class AppState extends State<CobuddyApp> {
       _Panel.delete => _deletePanel(),
       _Panel.strategy => _strategyPanel(),
       _Panel.requestCount => _requestCountPanel(),
+      _Panel.portConfig => _portConfigPanel(),
       _Panel.quit => _quitPanel(),
       _Panel.help => _helpPanel(),
     };
@@ -894,6 +915,141 @@ class AppState extends State<CobuddyApp> {
   }
 
   // ---------------------------------------------------------------------------
+  // Port configuration
+  // ---------------------------------------------------------------------------
+
+  static const _recommendedPorts = [
+    20130, 3010, 4001, 9090, 3001, 5001, 20131, 10000, 18080, 65432,
+  ];
+
+  Component _portConfigPanel() {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(border: BoxBorder.all(color: Colors.cyan)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Server Port',
+              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.cyan),
+            ),
+            const SizedBox(height: 1),
+            const Text(
+              'Port for the OpenAI-compatible proxy endpoint.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 1),
+            Row(
+              children: [
+                Text('Port:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 1),
+                SizedBox(
+                  width: 7,
+                  child: TextField(
+                    controller: _portCtrl,
+                    focused: true,
+                    placeholder: '20130',
+                    onSubmitted: (_) => _doSetPort(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 1),
+            Text(
+              'Available ports (scanned):',
+              style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
+            ),
+            Text(
+              _portScanDone
+                  ? _portStatus.entries
+                      .where((e) => e.value)
+                      .map((e) => '${e.key}')
+                      .take(5)
+                      .join(', ')
+                  : 'scanning...',
+              style: TextStyle(color: Colors.green),
+            ),
+            const SizedBox(height: 1),
+            if (!_portScanDone)
+              const Text(
+                'Scanning ports...',
+                style: TextStyle(color: Colors.yellow),
+              ),
+            if (_portScanDone && _portStatus.values.where((v) => v).isEmpty)
+              const Text(
+                'No recommended ports available',
+                style: TextStyle(color: Colors.red),
+              ),
+            const SizedBox(height: 1),
+            const Text(
+              'Restart required for port change to take effect.',
+              style: TextStyle(color: Colors.yellow),
+            ),
+            const SizedBox(height: 1),
+            const Text('[Enter] confirm  [Esc] cancel'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _scanPorts() async {
+    _portScanDone = false;
+    _portStatus.clear();
+    for (final port in _recommendedPorts) {
+      if (port == _config.serverPort) {
+        _portStatus[port] = true;
+        continue;
+      }
+      try {
+        final s = await ServerSocket.bind(
+          InternetAddress.loopbackIPv4,
+          port,
+          shared: true,
+        );
+        await s.close();
+        _portStatus[port] = true;
+      } catch (_) {
+        _portStatus[port] = false;
+      }
+    }
+    _portScanDone = true;
+    if (mounted) setState(() {});
+  }
+
+  void _showPortConfig() {
+    _portCtrl.text = '${_config.serverPort}';
+    _portScanDone = false;
+    _panel = _Panel.portConfig;
+    _scanPorts();
+    _setStatus('Enter new port and press Enter', _StatusLevel.info);
+  }
+
+  void _doSetPort() {
+    final raw = _portCtrl.text.trim();
+    final n = int.tryParse(raw);
+    if (n == null || n < 1024 || n > 65535) {
+      _setStatus(
+        'Enter a port between 1024 and 65535',
+        _StatusLevel.error,
+        duration: 3,
+      );
+      return;
+    }
+    _config.serverPort = n;
+    _config.save();
+    _panel = _Panel.main;
+    LogStore.info('tui', 'Port set to $n (restart required)');
+    _setStatus(
+      'Port set to $n. Restart to apply changes.',
+      _StatusLevel.success,
+      duration: 5,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Quit confirmation
   // ---------------------------------------------------------------------------
 
@@ -1005,6 +1161,7 @@ class AppState extends State<CobuddyApp> {
         addKey('[t]est', Colors.white);
         addKey('[r]strat', Colors.white);
         addKey('[R]otate', Colors.white);
+        addKey('[p]ort', Colors.white);
       }
       if (_showLog) {
         addKey('[C]lear', Colors.yellow);
@@ -1036,6 +1193,9 @@ class AppState extends State<CobuddyApp> {
       addKey('[Esc]', Colors.white);
     } else if (_panel == _Panel.help) {
       addKey('[h] close', Colors.white);
+      addKey('[Esc]', Colors.white);
+    } else if (_panel == _Panel.portConfig) {
+      addKey('[Enter]', Colors.cyan);
       addKey('[Esc]', Colors.white);
     } else if (_panel == _Panel.quit) {
       addKey('[Y]es', Colors.red);
