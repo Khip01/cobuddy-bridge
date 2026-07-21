@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import '../models/account.dart';
 import '../models/config.dart';
@@ -450,43 +451,94 @@ class ProxyServer {
 
   Future<void> _proxyChat(HttpRequest req) async {
     final body = await utf8.decodeStream(req);
-    final acc = await rotator.get();
-    if (acc == null) {
-      LogStore.warning('proxy', 'Chat: no accounts');
-      req.response.statusCode = 503;
+
+    final maxAttempts = math.max(1, store.loadAll().where((a) => a.enabled).length);
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      final acc = await rotator.get();
+      if (acc == null) {
+        LogStore.warning('proxy', 'Chat: no accounts');
+        req.response.statusCode = 503;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write('{"error":"no accounts","rotate":true}');
+        await req.response.close();
+        return;
+      }
+
+      LogStore.info('proxy', 'Chat proxy via ${acc.label} (${acc.id})');
+      final upstream = await http.post(
+        Uri.parse(
+          '${cfg.codebuddyApiBase.replaceAll(RegExp(r'/+$'), '')}/v2/chat/completions',
+        ),
+        headers: {
+          'Authorization': 'Bearer ${acc.accessToken}',
+          'Content-Type': 'application/json',
+        },
+        body: body,
+      );
+
+      if (upstream.statusCode == 200) {
+        req.response.statusCode = 200;
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(upstream.body);
+        await req.response.close();
+        return;
+      }
+
+      if (upstream.statusCode == 401 || upstream.statusCode == 403) {
+        LogStore.warning(
+          'proxy',
+          'Upstream ${upstream.statusCode} for ${acc.id}, marking expired',
+        );
+        store.markChecked(
+          acc.id,
+          AcctState.expired,
+          'upstream HTTP ${upstream.statusCode}',
+        );
+        LogStore.info('proxy', 'Rotating away from expired account ${acc.id}');
+        continue;
+      }
+
+      if (upstream.statusCode == 429) {
+        LogStore.warning(
+          'proxy',
+          'Upstream 429 for ${acc.id}, marking exhausted',
+        );
+        store.markChecked(
+          acc.id,
+          AcctState.exhausted,
+          'upstream HTTP 429 rate limited',
+        );
+        LogStore.info('proxy', 'Rotating away from exhausted account ${acc.id}');
+        continue;
+      }
+
+      if (upstream.statusCode >= 500) {
+        LogStore.warning(
+          'proxy',
+          'Upstream ${upstream.statusCode} for ${acc.id}, marking error',
+        );
+        store.markChecked(
+          acc.id,
+          AcctState.error,
+          'upstream HTTP ${upstream.statusCode}',
+        );
+        LogStore.info('proxy', 'Rotating away from errored account ${acc.id}');
+        continue;
+      }
+
+      // 4xx client errors (400, 422, etc.) are request issues, not account issues
+      req.response.statusCode = upstream.statusCode;
       req.response.headers.contentType = ContentType.json;
-      req.response.write('{"error":"no accounts","rotate":true}');
+      req.response.write(upstream.body);
       await req.response.close();
       return;
     }
 
-    LogStore.info('proxy', 'Chat proxy via ${acc.label} (${acc.id})');
-    final upstream = await http.post(
-      Uri.parse(
-        '${cfg.codebuddyApiBase.replaceAll(RegExp(r'/+$'), '')}/v2/chat/completions',
-      ),
-      headers: {
-        'Authorization': 'Bearer ${acc.accessToken}',
-        'Content-Type': 'application/json',
-      },
-      body: body,
-    );
-    req.response.statusCode = upstream.statusCode;
+    LogStore.error('proxy', 'All accounts exhausted or errored');
+    req.response.statusCode = 503;
     req.response.headers.contentType = ContentType.json;
-    req.response.write(upstream.body);
+    req.response.write('{"error":"all accounts exhausted","rotate":true}');
     await req.response.close();
-
-    if (upstream.statusCode == 401 || upstream.statusCode == 403) {
-      LogStore.warning(
-        'proxy',
-        'Upstream 401/403 for ${acc.id}, marking expired',
-      );
-      store.markChecked(
-        acc.id,
-        AcctState.expired,
-        'upstream HTTP ${upstream.statusCode}',
-      );
-    }
   }
 
   void _models(HttpRequest req) => _ok(req, {
